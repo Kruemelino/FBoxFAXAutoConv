@@ -5,11 +5,15 @@
 # https://github.com/Kruemelino/FBoxFAXAutoConv
 #
 
+# Pure Powershell cmdlets to read and write dBase .DBF-files. https://github.com/Delapro/PSDBF
+# get file from github repository and store it in the same folder as this script
+."$PSScriptRoot\DBFReadWrite.ps1"
+
 # specify the path to the folder you want to monitor:
 $FritzFaxPath = "$($env:APPDATA)\FRITZ!\Fax\"
 
 # specify which files you want to monitor
-$FileFilter = '*.sff'  
+$FileFilter = "*.sff"  
 
 # specify whether you want to monitor subfolders as well:
 $IncludeSubfolders = $false
@@ -18,13 +22,49 @@ $IncludeSubfolders = $false
 $AttributeFilter = [IO.NotifyFilters]::FileName, [IO.NotifyFilters]::LastWrite 
 
 # specify the folder for the file transfer
-$DestinationFolder = 'E:\tmp\FBoxFAXAutoConv\'
+$DestinationFolder = "E:\tmp\FBoxFAXAutoConv\"
 
 # FAXTools SSF2TIFF <c> Shamrock 2016
-$SSF2TIFFPath = 'E:\tmp\FBoxFAXAutoConv\SFF2TIFF.EXE'
+$SSF2TIFFPath = "E:\tmp\FBoxFAXAutoConv\SFF2TIFF.EXE"
 
 # FAXTools TIFF2PDF <c> Shamrock 2016
-$TIFF2PDFPath = 'E:\tmp\FBoxFAXAutoConv\TIFF2PDF.EXE'
+$TIFF2PDFPath = "E:\tmp\FBoxFAXAutoConv\TIFF2PDF.EXE"
+
+# Returns a new filename. Informations of the fax were taken from the FritzFax.Dbf
+function GetFileName($sffPath) 
+{
+    $NewFileName = ""
+    
+    # Write-Host "sff: $sffPath" -ForegroundColor Green
+
+    # Write-Host "dbf:" (Join-Path -Path $FritzFaxPath -ChildPath 'FritzFax.Dbf') -ForegroundColor Green
+
+    $a=Use-DBF (Join-Path -Path $FritzFaxPath -ChildPath 'FritzFax.Dbf')
+
+    $daten = foreach($nr in $a.ListAll()) {$a.Goto($nr); new-object -property $a.Fields -typename psobject}
+
+    $a.Close()
+
+    # Write-Host ($daten | foreach {($_.DATEI.Trim())}) -ForegroundColor Red
+
+    $req = $daten | where {$_."DATEI".Trim() -eq $sffPath}
+
+
+    # check if a entry for that sff file exists
+    If ($req) {
+        # create ne filename.
+        $Datum = $req.psobject.properties["DATUM"].value.Trim()
+        $Zeit = $req.psobject.properties["ZEIT"].value.Trim()
+        $TelNr = $req.psobject.properties["RUFNUMMER"].value.Trim()
+        
+        $NewFileName = "$Datum`_$Zeit`_$TelNr.sff" 
+    } Else {
+        Write-Host "Error: No entry for $sffPath in the database." -ForegroundColor Red
+        $NewFileName = "$(get-date -Format yyyyMMdd)`_" + (Get-Item $sffPath).Basename + ".sff"
+    }
+    
+    return $NewFileName
+}
 
 try
 {
@@ -48,10 +88,11 @@ try
             {
                 'Changed'  { "CHANGE" }
                 'Created'  { 
-                    # Copy the sff-file to $DestinationFolder and return the copied file
-                    $faxfile = Copy-Item -Path $details.FullPath -Destination $DestinationFolder -Force -PassThru
-                    
-                    Write-Host "Convert sff-file to tiff-file: $faxfile"
+
+                    # Rename and Copy the sff-file to $DestinationFolder and return the new file
+                    # $faxfile = Copy-Item -Path $details.FullPath -Destination $DestinationFolder -Force -PassThru
+                    $faxfile = Copy-Item -Path $details.FullPath -Destination (Join-Path -Path $DestinationFolder -ChildPath (GetFileName($details.FullPath))) -Force -PassThru
+                    Write-Host "Convert sff-file to tif-image: $faxfile"
                     
                     # Convert the ssf-file to a tif-image using the FAXTools SSF2TIFF <c> Shamrock 2016
                     & $SSF2TIFFPath $faxfile.FullName
@@ -71,21 +112,6 @@ try
                     $faxfile = Get-ChildItem (Join-Path -Path $DestinationFolder -ChildPath ($faxfile.Basename + ".pdf"))
                     
                     Write-Host "Created pdf-document: $faxfile" -ForegroundColor Green
-                                      
-                    # # Rename File 
-                    # $num = 1
-                    # $NewFileName = Join-Path -Path $DestinationFolder -ChildPath ((Get-Item $ConvertFile).Name)
-                    # Write-Host $NewFileName
-                    # while(Test-Path -Path $NewFileName)
-                    # {
-                    #     $NewFileName = Join-Path $DestinationFolder ((Get-Item $ConvertFile).Basename + "_$num" + (Get-Item $ConvertFile).Extension)    
-                    #     $num += 1  
-                    # }
-                    # # Write-Host "Rename File $FullPath to $NewFileName"  
-                    # Write-Host "Move file $ConvertFile to $DestinationFolder"
-                    # 
-                    # Move-Item -Path $ConvertFile -Destination $NewFileName
-
                 }
                 'Deleted'  { "DELETED"}
                 'Renamed'  { "RENAMED"}
